@@ -18,7 +18,7 @@ using namespace std;
 class Log
 {
 public:
-    //C++11以后,使用局部变量懒汉不用加锁
+
     static Log *get_instance()
     {
         static Log instance;
@@ -41,9 +41,9 @@ private:
     virtual ~Log();
     void *async_write_log()
     {
-        string single_log;
+        string single_log = "";
         //从阻塞队列中取出一个日志string，写入文件
-        while (m_log_queue->pop(single_log))
+        while (deque_->pop(single_log))
         {
             lock_guard<mutex> locker(m_mtx);
             fputs(single_log.c_str(), m_fp);            
@@ -59,7 +59,9 @@ private:
     int m_today;            //因为按天分类,记录当前时间是那一天
     FILE *m_fp;             //打开log的文件指针
     char *m_buf;   
-    BlockDeque<string> *m_log_queue; //阻塞队列
+    //BlockDeque<string> *m_log_queue; //阻塞队列
+    //BlockDeque<string> deque_;
+    //thread writeThread_;
     bool m_is_async;                  //是否同步标志位
     int m_close_log;        //关闭日志
     

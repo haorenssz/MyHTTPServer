@@ -1,6 +1,6 @@
 
 #include "log.h"
-//using namespace std::;
+using namespace std;
 
 Log::Log()
 {
@@ -14,8 +14,17 @@ Log::Log()
 
 Log::~Log()
 {
+    if(writeThread_ && writeThread_->joinable()) {
+        while(!deque_->empty()) {
+            deque_->flush();
+        };
+        deque_->Close();
+        writeThread_->join();
+    }
     if (m_fp != NULL)
     {
+        lock_guard<mutex> locker(m_mtx);
+        flush();
         fclose(m_fp);
     }
 }
@@ -29,18 +38,39 @@ bool Log::init(const char *file_path, int close_log, int log_buf_size, int split
         m_is_async = true;
         if(!deque_)
         {
+            
+            std::unique_ptr<BlockDeque<std::string>> newDeque(new BlockDeque<std::string>);
+            deque_ = move(newDeque);
+            /*
+            //flush_log_thread为回调函数,这里表示创建线程异步写日志
+            std::unique_ptr<std::thread> NewThread(new thread(flush_log_thread));
+            writeThread_ = move(NewThread);
+            */
+            /*
             std::unique_ptr<BlockDeque<std::string>> newDeque(new BlockDeque<std::string>);
             deque_ = move(newDeque);
 
             //flush_log_thread为回调函数,这里表示创建线程异步写日志
             std::unique_ptr<std::thread> NewThread(new thread(flush_log_thread));
             writeThread_ = move(NewThread);
+            m_is_async = true;*/
+
+            //deque_ = new BlockDeque<string>(max_queue_size);
+            //pthread_t tid;
+            //flush_log_thread为回调函数,这里表示创建线程异步写日志
+            //pthread_create(&tid, NULL, flush_log_thread, NULL);
+            //writeThread_ = new thread(flush_log_thread);
+            //flush_log_thread为回调函数,这里表示创建线程异步写日志
+            std::unique_ptr<std::thread> NewThread(new thread(flush_log_thread));
+            writeThread_ = move(NewThread);
+            //writeThread_(NewThread);
         }
         
 
     }
     else 
         m_is_async = false;
+        
     m_close_log = close_log;
     m_log_buf_size = log_buf_size;
     m_split_lines = split_lines;
@@ -63,7 +93,7 @@ bool Log::init(const char *file_path, int close_log, int log_buf_size, int split
             dir_name, my_time.tm_year + 1900, my_time.tm_mon + 1, my_time.tm_mday, log_name);
 
     {
-        lock_guard<mutex> locker(m_mtx);
+        std::lock_guard<mutex> locker(m_mtx);
         if(m_fp) { 
             flush();
             fclose(m_fp); 
@@ -109,12 +139,13 @@ void Log::write_log(int level, const char *format, ...)
     }
     
 
-    unique_lock<mutex> locker(m_mtx);
+    //unique_lock<mutex> locker(m_mtx);
     m_count++;
     //
     if (m_today != my_tm.tm_mday || m_count % m_split_lines == 0)
     {
         unique_lock<mutex> locker(m_mtx);
+        locker.unlock();
         char new_log[256] = {0};
         fflush(m_fp);
         fclose(m_fp);
@@ -136,8 +167,8 @@ void Log::write_log(int level, const char *format, ...)
 
     }
 
-    va_list valst;
-    va_start(valst, format);
+    va_list vaList;
+    va_start(vaList, format);
 
     string log_str;
     {
@@ -145,30 +176,33 @@ void Log::write_log(int level, const char *format, ...)
         int n = snprintf(m_buf, 48, "%d-%02d-%02d %02d:%02d:%02d.%06ld %s ",
                         my_tm.tm_year + 1900, my_tm.tm_mon + 1, my_tm.tm_mday,
                         my_tm.tm_hour, my_tm.tm_min, my_tm.tm_sec, now.tv_usec, kind);
-        
-        int m = vsnprintf(m_buf + n, m_log_buf_size - 1, format, valst);
-
+        va_start(vaList, format);
+        int m = vsnprintf(m_buf + n, m_log_buf_size - 1, format, vaList);
+        va_end(vaList);
         m_buf[n + m] = '\n';
         m_buf[n + m + 1] = '\0';
         log_str = m_buf;
     }
 
-    if (m_is_async && !m_log_queue->full())
+    if (m_is_async && !deque_->full())
     {
-        m_log_queue->push_back(log_str);
+        deque_->push_back(log_str);
     }
     else
     {
-        unique_lock<mutex> locker(m_mtx);
+        //unique_lock<mutex> locker(m_mtx);
         fputs(log_str.c_str(), m_fp);        
     }
 
-    va_end(valst);
+    //va_end(vaList);
 }
 
 
 void Log::flush(void)
 {
-    lock_guard<mutex> locker(m_mtx);
+    if(m_is_async) { 
+        deque_->flush(); 
+    }
     fflush(m_fp);
+    cout<<"finish";
 }
